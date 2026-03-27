@@ -8,7 +8,9 @@ The existing lambda is tightly coupled to the LONI data pipeline. The generalize
 
 ## Source Lambda Overview
 
-The source lives in `naccdata/loni-table-data`, subdirectory `s3-flywheel-import/`. It is a SAM-deployed Docker-based Python 3.12 Lambda.
+A reference copy of the source lambda is included in this repo at `reference/s3-flywheel-import/`. The original lives in the `naccdata/loni-table-data` GitHub repo under `s3-flywheel-import/`. It is a SAM-deployed Docker-based Python 3.12 Lambda.
+
+> The `reference/` directory is not part of the project — it exists solely as context for the refactor. It should be removed once the generalized lambda is implemented.
 
 ### What it does
 
@@ -22,12 +24,13 @@ The source lives in `naccdata/loni-table-data`, subdirectory `s3-flywheel-import
    - Imports each file into Flywheel via the two-step upload ticket process (copy-by-reference, no data transfer)
 5. Returns structured results with per-study metrics and error tracking
 
-### Key components
+### Key components (all in `reference/s3-flywheel-import/`)
 
 - `models.py` — `StudyConfig`, `ImportConfig`, `StudyImportResult`, `ImportResult` dataclasses. `ImportConfig.from_event()` parses the Lambda event with legacy format support.
 - `client_handler.py` — `ClientHandler` class wrapping `FWClient` and `boto3`. Methods: `get_project_id()`, `filter_objects()`, `import_to_flywheel()`.
 - `import_operations.py` — `import_study_metadata()` orchestrates the import for a single study config.
 - `s3_flywheel_import.py` — Lambda handler (`main`). Parses config, gets API key from SSM, initializes `ClientHandler`, loops over studies, returns results.
+- `tests/` — Unit tests for all modules.
 
 ### Dependencies
 
