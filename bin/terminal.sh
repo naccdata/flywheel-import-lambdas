@@ -6,6 +6,9 @@ if ! command -v devcontainer &> /dev/null; then
     exit 1
 fi
 
-export DOCKER_CLI_HINTS=false
 export WORKSPACE_FOLDER=`pwd`
-devcontainer exec --workspace-folder $WORKSPACE_FOLDER zsh
+export DOCKER_CLI_HINTS=false
+
+# Use devcontainer exec to open an interactive zsh shell
+# This ensures the remoteEnv PATH is set correctly
+devcontainer exec --workspace-folder $WORKSPACE_FOLDER /bin/zsh -l

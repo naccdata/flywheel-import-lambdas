@@ -8,10 +8,10 @@ fi
 
 if [ $# -eq 0 ]; then
     echo "Usage: $0 <command> [args...]"
-    echo "Example: $0 pants test ::"
+    echo "Example: $0 ls -la"
     exit 1
 fi
 
-export DOCKER_CLI_HINTS=false
 export WORKSPACE_FOLDER=`pwd`
+export DOCKER_CLI_HINTS=false
 devcontainer exec --workspace-folder $WORKSPACE_FOLDER "$@"

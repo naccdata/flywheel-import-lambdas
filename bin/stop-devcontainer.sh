@@ -6,17 +6,6 @@ if ! command -v devcontainer &> /dev/null; then
     exit 1
 fi
 
-export DOCKER_CLI_HINTS=false
 export WORKSPACE_FOLDER=`pwd`
-
-# Get the container name
-CONTAINER_NAME=$(devcontainer exec --workspace-folder $WORKSPACE_FOLDER hostname 2>/dev/null || echo "")
-
-if [ -n "$CONTAINER_NAME" ]; then
-    echo "Stopping devcontainer..."
-    docker stop $CONTAINER_NAME
-    docker rm $CONTAINER_NAME
-    echo "Devcontainer stopped and removed"
-else
-    echo "No running devcontainer found"
-fi
+export DOCKER_CLI_HINTS=false
+devcontainer exec --workspace-folder ${WORKSPACE_FOLDER} hostname | xargs -r docker rm -f
