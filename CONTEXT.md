@@ -36,7 +36,7 @@ A reference copy of the source lambda is included in this repo at `reference/s3-
 
 - `fw-client>=0.1.0` — Flywheel Python SDK (uses `FWClient`, HTTP-based)
 - `boto3>=1.34.0` — AWS SDK (S3 object listing, SSM parameter retrieval)
-- `awslambdaric>=2.0.0` — AWS Lambda runtime interface client (for Docker-based lambdas)
+- `awslambdaric>=2.0.0` — AWS Lambda runtime interface client (Docker-based lambdas only — not needed in this repo since we use Pants zip-based lambda targets)
 
 ### Flywheel API calls used
 
@@ -63,9 +63,9 @@ A reference copy of the source lambda is included in this repo at `reference/s3-
 
 This repo was created from `naccdata/lambda-monorepo-template`. It uses:
 
-- **Pants** build system (`pants.toml`, `BUILD` files)
+- **Pants** build system (v2.29.0) with `python_aws_lambda_function` and `python_aws_lambda_layer` targets — produces zip-based Lambda packages (not Docker images like the reference lambda)
 - **Devcontainer** for development (`.devcontainer/`)
-- **Terraform** for infrastructure (see `templates/lambda-example/` in the template repo for patterns)
+- **Terraform** for infrastructure
 - **Kiro Pants Power** for build automation (`.kiro/settings/mcp.json`)
 
 ### Current layout
@@ -73,14 +73,19 @@ This repo was created from `naccdata/lambda-monorepo-template`. It uses:
 ```
 flywheel-import-lambdas/
 ├── .devcontainer/          # Dev container config
-├── .kiro/settings/         # Kiro MCP settings (pants power)
-├── bin/                    # Dev scripts (build, start, stop, terminal, exec, set-venv)
-├── docs/                   # Template documentation
-├── examples/               # Example lambda implementations
-│   ├── simple-lambda/      # Basic lambda pattern
-│   ├── database-lambda/    # Lambda with DB connectivity
-│   └── common/             # Shared code example
+├── .kiro/                  # Kiro settings and steering
+│   ├── settings/           # MCP settings (pants power)
+│   └── steering/           # Steering documents
+├── bin/                    # Dev scripts (build, start, stop, terminal, exec)
+├── common/                 # Shared code across lambdas (to be populated)
+│   └── src/python/
+├── lambda/                 # Individual Lambda functions (to be populated)
+├── docs/                   # Documentation
+├── examples/               # Template examples (ignored by Pants, for reference only)
+├── reference/              # Reference LONI lambda (ignored by Pants, context only)
+│   └── s3-flywheel-import/
 ├── BUILD                   # Root Pants BUILD file
+├── CONTEXT.md              # This file
 ├── get-pants.sh            # Pants installer
 ├── pants.toml              # Pants configuration
 ├── requirements.txt        # Python dependencies
