@@ -16,7 +16,7 @@ provider "aws" {
   region = var.aws_region
 }
 
-# --- IAM Role ---
+# --- IAM Role (minimal — clients attach resource-access policies) ---
 
 resource "aws_iam_role" "lambda_role" {
   name = "${var.lambda_function_name}-role"
@@ -40,51 +40,6 @@ resource "aws_iam_role" "lambda_role" {
 resource "aws_iam_role_policy_attachment" "lambda_basic_execution" {
   role       = aws_iam_role.lambda_role.name
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-}
-
-resource "aws_iam_role_policy" "lambda_policy" {
-  name = "${var.lambda_function_name}-policy"
-  role = aws_iam_role.lambda_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = ["ssm:GetParameter"]
-        Resource = var.ssm_parameter_arn
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "logs:CreateLogGroup",
-          "logs:CreateLogStream",
-          "logs:PutLogEvents",
-        ]
-        Resource = "arn:aws:logs:*:*:log-group:/aws/lambda/${var.lambda_function_name}:*"
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "s3:GetObject",
-          "s3:ListBucket",
-        ]
-        Resource = [
-          var.s3_bucket_arn,
-          "${var.s3_bucket_arn}/*",
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "ec2:CreateNetworkInterface",
-          "ec2:DescribeNetworkInterfaces",
-          "ec2:DeleteNetworkInterface",
-        ]
-        Resource = "*"
-      },
-    ]
-  })
 }
 
 # --- Lambda Function ---

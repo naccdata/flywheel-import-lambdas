@@ -14,8 +14,13 @@ output "lambda_invoke_arn" {
 }
 
 output "lambda_role_arn" {
-  description = "ARN of the Lambda execution role"
+  description = "ARN of the Lambda execution role (clients attach policies to this)"
   value       = aws_iam_role.lambda_role.arn
+}
+
+output "lambda_role_name" {
+  description = "Name of the Lambda execution role (clients use this to attach policies)"
+  value       = aws_iam_role.lambda_role.name
 }
 
 output "dev_alias_arn" {

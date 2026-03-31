@@ -37,13 +37,13 @@ variable "memory_size" {
 variable "lambda_file_path" {
   description = "Path to Lambda zip file"
   type        = string
-  default     = "dist/lambda/s3_import/src/python/s3_import_lambda/lambda.zip"
+  default     = "dist/lambda.s3_import.src.python.s3_import_lambda/lambda.zip"
 }
 
 variable "layer_file_path" {
   description = "Path to layer zip file"
   type        = string
-  default     = "dist/lambda/s3_import/src/python/s3_import_lambda/layer.zip"
+  default     = "dist/lambda.s3_import.src.python.s3_import_lambda/layer.zip"
 }
 
 variable "layer_name" {
@@ -68,16 +68,6 @@ variable "subnet_ids" {
   description = "Subnet IDs for VPC configuration"
   type        = list(string)
   default     = []
-}
-
-variable "ssm_parameter_arn" {
-  description = "ARN of the SSM parameter storing the Flywheel API key"
-  type        = string
-}
-
-variable "s3_bucket_arn" {
-  description = "ARN of the source S3 bucket"
-  type        = string
 }
 
 variable "prod_function_version" {
