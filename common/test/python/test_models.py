@@ -43,21 +43,23 @@ class TestPrefixPathPair:
         assert pair.include_patterns == [".csv", ".tsv"]
         assert pair.exclude_patterns == ["_backup"]
 
-    def test_empty_s3_prefix_raises(self) -> None:
-        with pytest.raises(ValidationError, match="non-empty"):
-            PrefixPathPair(
-                s3_prefix="",
-                fw_group="group",
-                fw_project="project",
-            )
+    def test_empty_s3_prefix_allowed(self) -> None:
+        """Empty s3_prefix means bucket root — valid use case."""
+        pair = PrefixPathPair(
+            s3_prefix="",
+            fw_group="group",
+            fw_project="project",
+        )
+        assert pair.s3_prefix == ""
 
-    def test_whitespace_s3_prefix_raises(self) -> None:
-        with pytest.raises(ValidationError, match="non-empty"):
-            PrefixPathPair(
-                s3_prefix="   ",
-                fw_group="group",
-                fw_project="project",
-            )
+    def test_whitespace_s3_prefix_stripped_to_empty(self) -> None:
+        """Whitespace-only s3_prefix is normalized to empty string."""
+        pair = PrefixPathPair(
+            s3_prefix="   ",
+            fw_group="group",
+            fw_project="project",
+        )
+        assert pair.s3_prefix == ""
 
     def test_empty_fw_group_raises(self) -> None:
         with pytest.raises(ValidationError, match="non-empty"):
