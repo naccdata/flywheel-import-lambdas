@@ -1,21 +1,21 @@
 # Deployment Guide
 
-This guide covers deploying AWS Lambda functions using Terraform in a Pants monorepo environment.
+This guide covers deploying the S3 Flywheel Import Lambda using Terraform.
 
 ## Overview
 
-The deployment process involves:
-1. Building Lambda packages with Pants
-2. Deploying infrastructure with Terraform
-3. Managing multiple environments
-4. Monitoring and rollback procedures
+The deployment process:
+
+1. Build Lambda packages with Pants
+2. Configure variables in `terraform.tfvars`
+3. Deploy infrastructure with Terraform
 
 ## Prerequisites
 
 - AWS CLI configured with appropriate credentials
-- Terraform installed (available in dev container)
+- Terraform >= 1.0 installed (available in dev container)
 - Pants build system set up
-- IAM permissions for Lambda, IAM, VPC, and other required services
+- Access to the `nacc-terraform-state` S3 bucket for Terraform state
 
 ## Build Process
 
@@ -25,756 +25,217 @@ The deployment process involves:
 # Ensure dev container is running
 ./bin/start-devcontainer.sh
 
-# Build specific lambda
-./bin/exec-in-devcontainer.sh pants package lambda/my_lambda/src/python/my_lambda_lambda::
+# Build the s3_import lambda (function code + dependencies layer)
+./bin/exec-in-devcontainer.sh pants package lambda/s3_import/src/python/s3_import_lambda::
 
-# Build all lambdas
-./bin/exec-in-devcontainer.sh pants package ::
-
-# Check build artifacts
-ls -la dist/
+# Verify build artifacts
+ls -la dist/lambda.s3_import.src.python.s3_import_lambda/
 ```
 
-### Build Artifacts Structure
+### Build Artifacts
 
-```
-dist/
-└── lambda.my_lambda.src.python.my_lambda_lambda/
-    ├── lambda.zip      # Lambda function code
-    ├── layer.zip       # Dependencies layer
-    └── powertools.zip  # Powertools layer (if configured)
+```text
+dist/lambda.s3_import.src.python.s3_import_lambda/
+├── lambda.zip   # Lambda function code
+└── layer.zip    # Dependencies layer (boto3, pydantic, fw-client, powertools)
 ```
 
 ## Terraform Configuration
 
-### Basic Lambda Terraform Structure
+All Terraform files live in `lambda/s3_import/`:
 
-**File: `lambda/my_lambda/main.tf`**
+| File | Purpose |
+| ---- | ------- |
+| `main.tf` | Resources: IAM role, Lambda function, layer, alias, alarms |
+| `variables.tf` | Input variables with validation |
+| `outputs.tf` | Exported values (ARNs, names) |
+| `terraform.tfvars.example` | Example variable values — copy to `terraform.tfvars` and customize |
+
+### Remote State
+
+Terraform state is stored in S3:
+
+- Bucket: `nacc-terraform-state`
+- Key: `lambda/s3-flywheel-import/terraform.tfstate`
+- Region: `us-east-1`
+- Encryption: enabled
+
+## IAM Policy Management
+
+The Terraform configuration creates an IAM execution role with inline policies for the specific AWS resources the Lambda needs. These policies are managed via Terraform variables so they can be updated without modifying `main.tf`.
+
+### Included Policies
+
+The Lambda role includes four policy attachments:
+
+| Policy | Source | Purpose |
+| ------ | ------ | ------- |
+| `AWSLambdaBasicExecutionRole` | AWS managed | CloudWatch Logs write access |
+| `AWSXRayDaemonWriteAccess` | AWS managed | X-Ray tracing |
+| S3 read policy | Inline, from `s3_bucket_arns` | `s3:GetObject`, `s3:ListBucket` on source buckets |
+| SSM read policy | Inline, from `ssm_parameter_arns` | `ssm:GetParameter`, `ssm:GetParameters` for API keys |
+
+### Default Resource ARNs
+
+The default variable values grant access to:
+
+**S3 buckets:**
+
+- `arn:aws:s3:::naccquickaccess`
+- `arn:aws:s3:::loni-table-data`
+
+**SSM parameters:**
+
+- `arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/gearbot/apikey`
+
+### Updating Policies for Different Scenarios
+
+When deploying with different S3 buckets or SSM parameters, override the variables in your `terraform.tfvars`. You do not need to edit `main.tf`.
+
+**Adding a new source bucket:**
 
 ```hcl
-terraform {
-  required_version = ">= 1.0, < 2.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    local = {
-      source  = "hashicorp/local"
-      version = "~> 2.4"
-    }
-  }
-}
+s3_bucket_arns = [
+  "arn:aws:s3:::naccquickaccess",
+  "arn:aws:s3:::loni-table-data",
+  "arn:aws:s3:::my-new-source-bucket"
+]
+```
 
-provider "aws" {
-  region = var.aws_region
-}
+**Using a different SSM parameter path (e.g., a different Flywheel instance):**
 
-# Lambda function
-resource "aws_lambda_function" "main" {
-  filename         = var.lambda_file_path
-  function_name    = var.lambda_function_name
-  role            = var.role_arn
-  handler         = var.lambda_handler
-  source_code_hash = filebase64sha256(var.lambda_file_path)
-  runtime         = var.runtime
-  timeout         = var.timeout
-  memory_size     = var.memory_size
-  
-  layers = [
-    aws_lambda_layer_version.dependencies.arn
+```hcl
+ssm_parameter_arns = [
+  "arn:aws:ssm:us-west-2:090173369068:parameter/dev/flywheel/gearbot/apikey"
+]
+```
+
+**Using multiple SSM parameters:**
+
+```hcl
+ssm_parameter_arns = [
+  "arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/gearbot/apikey",
+  "arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/other-bot/apikey"
+]
+```
+
+**Using a wildcard for SSM (all parameters under a path):**
+
+```hcl
+ssm_parameter_arns = [
+  "arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/*"
+]
+```
+
+### Validation
+
+Both variables include validation rules:
+
+- `s3_bucket_arns` — each entry must start with `arn:aws:s3:::`
+- `ssm_parameter_arns` — each entry must start with `arn:aws:ssm:`
+
+Terraform will reject invalid ARN formats at plan time.
+
+### S3 Policy Details
+
+The S3 inline policy grants both bucket-level and object-level access for each ARN in `s3_bucket_arns`:
+
+```hcl
+Resource = flatten([
+  for arn in var.s3_bucket_arns : [
+    arn,        # bucket-level (for ListBucket)
+    "${arn}/*"  # object-level (for GetObject)
   ]
-  
-  # VPC configuration (if needed)
-  dynamic "vpc_config" {
-    for_each = var.vpc_config != null ? [var.vpc_config] : []
-    content {
-      subnet_ids         = vpc_config.value.subnet_ids
-      security_group_ids = vpc_config.value.security_group_ids
-    }
-  }
-  
-  environment {
-    variables = var.environment_variables
-  }
-  
-  # Enable X-Ray tracing
-  tracing_config {
-    mode = "Active"
-  }
-  
-  publish = true
-  
-  tags = var.tags
-}
-
-# Lambda layer for dependencies
-resource "aws_lambda_layer_version" "dependencies" {
-  filename            = var.layer_file_path
-  layer_name          = var.layer_name
-  source_code_hash    = filebase64sha256(var.layer_file_path)
-  compatible_runtimes = [var.runtime]
-  
-  description = "Dependencies layer for ${var.lambda_function_name}"
-}
-
-# Lambda aliases for environment management
-resource "aws_lambda_alias" "dev" {
-  name             = "dev"
-  description      = "Development alias"
-  function_name    = aws_lambda_function.main.function_name
-  function_version = "$LATEST"
-}
-
-resource "aws_lambda_alias" "prod" {
-  name             = "prod"
-  description      = "Production alias"
-  function_name    = aws_lambda_function.main.function_name
-  function_version = var.prod_function_version
-}
-
-# CloudWatch Log Group
-resource "aws_cloudwatch_log_group" "lambda_logs" {
-  name              = "/aws/lambda/${var.lambda_function_name}"
-  retention_in_days = var.log_retention_days
-  
-  tags = var.tags
-}
-
-# Provisioned concurrency for production (optional)
-resource "aws_lambda_provisioned_concurrency_config" "prod" {
-  count = var.provisioned_concurrency > 0 ? 1 : 0
-  
-  function_name                     = aws_lambda_function.main.function_name
-  provisioned_concurrent_executions = var.provisioned_concurrency
-  qualifier                         = aws_lambda_alias.prod.name
-  
-  depends_on = [aws_lambda_alias.prod]
-}
+])
 ```
 
-**File: `lambda/my_lambda/variables.tf`**
+Listing objects and reading files are both covered. Write access is intentionally excluded — the Lambda only reads from S3.
 
-```hcl
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "us-east-1"
-}
+## Deployment Workflow
 
-variable "lambda_function_name" {
-  description = "Name of the Lambda function"
-  type        = string
-}
-
-variable "lambda_handler" {
-  description = "Lambda handler"
-  type        = string
-  default     = "lambda_function.lambda_handler"
-}
-
-variable "runtime" {
-  description = "Lambda runtime"
-  type        = string
-  default     = "python3.12"
-}
-
-variable "timeout" {
-  description = "Lambda timeout in seconds"
-  type        = number
-  default     = 60
-}
-
-variable "memory_size" {
-  description = "Lambda memory size in MB"
-  type        = number
-  default     = 128
-}
-
-variable "role_arn" {
-  description = "IAM role ARN for Lambda execution"
-  type        = string
-}
-
-variable "lambda_file_path" {
-  description = "Path to Lambda zip file"
-  type        = string
-}
-
-variable "layer_file_path" {
-  description = "Path to layer zip file"
-  type        = string
-}
-
-variable "layer_name" {
-  description = "Name of the Lambda layer"
-  type        = string
-}
-
-variable "environment_variables" {
-  description = "Environment variables for Lambda"
-  type        = map(string)
-  default     = {}
-}
-
-variable "vpc_config" {
-  description = "VPC configuration for Lambda"
-  type = object({
-    subnet_ids         = list(string)
-    security_group_ids = list(string)
-  })
-  default = null
-}
-
-variable "prod_function_version" {
-  description = "Function version for production alias"
-  type        = string
-  default     = "1"
-}
-
-variable "provisioned_concurrency" {
-  description = "Provisioned concurrency for production"
-  type        = number
-  default     = 0
-}
-
-variable "log_retention_days" {
-  description = "CloudWatch log retention in days"
-  type        = number
-  default     = 14
-}
-
-variable "tags" {
-  description = "Resource tags"
-  type        = map(string)
-  default     = {}
-}
-```
-
-**File: `lambda/my_lambda/outputs.tf`**
-
-```hcl
-output "lambda_function_arn" {
-  description = "ARN of the Lambda function"
-  value       = aws_lambda_function.main.arn
-}
-
-output "lambda_function_name" {
-  description = "Name of the Lambda function"
-  value       = aws_lambda_function.main.function_name
-}
-
-output "lambda_invoke_arn" {
-  description = "Invoke ARN of the Lambda function"
-  value       = aws_lambda_function.main.invoke_arn
-}
-
-output "dev_alias_arn" {
-  description = "ARN of the dev alias"
-  value       = aws_lambda_alias.dev.arn
-}
-
-output "prod_alias_arn" {
-  description = "ARN of the prod alias"
-  value       = aws_lambda_alias.prod.arn
-}
-
-output "layer_arn" {
-  description = "ARN of the Lambda layer"
-  value       = aws_lambda_layer_version.dependencies.arn
-}
-```
-
-## IAM Configuration
-
-### Lambda Execution Role
-
-**File: `terraform/modules/iam/lambda-role.tf`**
-
-```hcl
-# Basic Lambda execution role
-resource "aws_iam_role" "lambda_execution" {
-  name = "${var.project_name}-lambda-execution-role"
-
-  assume_role_policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Action = "sts:AssumeRole"
-        Effect = "Allow"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-      }
-    ]
-  })
-
-  tags = var.tags
-}
-
-# Basic execution policy
-resource "aws_iam_role_policy_attachment" "lambda_basic" {
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
-  role       = aws_iam_role.lambda_execution.name
-}
-
-# VPC execution policy (if using VPC)
-resource "aws_iam_role_policy_attachment" "lambda_vpc" {
-  count      = var.enable_vpc ? 1 : 0
-  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
-  role       = aws_iam_role.lambda_execution.name
-}
-
-# X-Ray tracing policy
-resource "aws_iam_role_policy_attachment" "lambda_xray" {
-  policy_arn = "arn:aws:iam::aws:policy/AWSXRayDaemonWriteAccess"
-  role       = aws_iam_role.lambda_execution.name
-}
-
-# Custom policy for additional permissions
-resource "aws_iam_role_policy" "lambda_custom" {
-  count = length(var.custom_policies) > 0 ? 1 : 0
-  name  = "${var.project_name}-lambda-custom-policy"
-  role  = aws_iam_role.lambda_execution.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = var.custom_policies
-  })
-}
-
-output "lambda_role_arn" {
-  description = "ARN of the Lambda execution role"
-  value       = aws_iam_role.lambda_execution.arn
-}
-```
-
-## Deployment Workflows
-
-### Single Lambda Deployment
+### First-Time Setup
 
 ```bash
-# 1. Start dev container
+# Start dev container
 ./bin/start-devcontainer.sh
 
-# 2. Build the lambda
-./bin/exec-in-devcontainer.sh pants package lambda/my_lambda/src/python/my_lambda_lambda::
+# Build packages
+./bin/exec-in-devcontainer.sh pants package lambda/s3_import/src/python/s3_import_lambda::
 
-# 3. Navigate to lambda directory
-cd lambda/my_lambda
-
-# 4. Initialize Terraform (first time only)
+# Initialize Terraform (from the lambda/s3_import directory)
+cd lambda/s3_import
 terraform init
 
-# 5. Plan deployment
-terraform plan \
-  -var="lambda_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/lambda.zip" \
-  -var="layer_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/layer.zip" \
-  -var="lambda_function_name=my-lambda-function" \
-  -var="layer_name=my-lambda-layer" \
-  -var="role_arn=arn:aws:iam::123456789012:role/lambda-execution-role"
-
-# 6. Apply deployment
-terraform apply \
-  -var="lambda_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/lambda.zip" \
-  -var="layer_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/layer.zip" \
-  -var="lambda_function_name=my-lambda-function" \
-  -var="layer_name=my-lambda-layer" \
-  -var="role_arn=arn:aws:iam::123456789012:role/lambda-execution-role"
+# Copy and edit the example tfvars
+cp terraform.tfvars.example terraform.tfvars
 ```
 
-### Using Terraform Variables File
-
-**File: `lambda/my_lambda/terraform.tfvars`**
-
-```hcl
-# Lambda configuration
-lambda_function_name = "my-lambda-function"
-layer_name          = "my-lambda-layer"
-timeout             = 30
-memory_size         = 256
-
-# File paths (updated by deployment script)
-lambda_file_path = "../../dist/lambda.my_lambda.src.python.my_lambda_lambda/lambda.zip"
-layer_file_path  = "../../dist/lambda.my_lambda.src.python.my_lambda_lambda/layer.zip"
-
-# IAM role
-role_arn = "arn:aws:iam::123456789012:role/lambda-execution-role"
-
-# Environment variables
-environment_variables = {
-  ENVIRONMENT = "dev"
-  LOG_LEVEL   = "INFO"
-}
-
-# VPC configuration (if needed)
-vpc_config = {
-  subnet_ids         = ["subnet-12345", "subnet-67890"]
-  security_group_ids = ["sg-abcdef"]
-}
-
-# Tags
-tags = {
-  Environment = "dev"
-  Project     = "my-project"
-  Owner       = "team-name"
-}
-```
-
-### Deployment Script
-
-**File: `scripts/deploy-lambda.sh`**
+### Deploy
 
 ```bash
-#!/bin/bash
+# Build
+./bin/exec-in-devcontainer.sh pants package lambda/s3_import/src/python/s3_import_lambda::
 
-set -euo pipefail
+# Plan (review changes)
+cd lambda/s3_import
+terraform plan -var-file="terraform.tfvars"
 
-# Configuration
-LAMBDA_NAME=${1:-""}
-ENVIRONMENT=${2:-"dev"}
-
-if [ -z "$LAMBDA_NAME" ]; then
-    echo "Usage: $0 <lambda_name> [environment]"
-    echo "Example: $0 my_lambda dev"
-    exit 1
-fi
-
-LAMBDA_DIR="lambda/${LAMBDA_NAME}"
-DIST_DIR="dist/lambda.${LAMBDA_NAME}.src.python.${LAMBDA_NAME}_lambda"
-
-echo "Deploying Lambda: $LAMBDA_NAME to environment: $ENVIRONMENT"
-
-# Ensure dev container is running
-./bin/start-devcontainer.sh
-
-# Build the lambda
-echo "Building Lambda package..."
-./bin/exec-in-devcontainer.sh pants package "lambda/${LAMBDA_NAME}/src/python/${LAMBDA_NAME}_lambda::"
-
-# Check if build artifacts exist
-if [ ! -f "${DIST_DIR}/lambda.zip" ]; then
-    echo "Error: Lambda zip file not found at ${DIST_DIR}/lambda.zip"
-    exit 1
-fi
-
-if [ ! -f "${DIST_DIR}/layer.zip" ]; then
-    echo "Error: Layer zip file not found at ${DIST_DIR}/layer.zip"
-    exit 1
-fi
-
-# Navigate to lambda directory
-cd "$LAMBDA_DIR"
-
-# Initialize Terraform if needed
-if [ ! -d ".terraform" ]; then
-    echo "Initializing Terraform..."
-    terraform init
-fi
-
-# Select workspace for environment
-echo "Selecting Terraform workspace: $ENVIRONMENT"
-terraform workspace select "$ENVIRONMENT" || terraform workspace new "$ENVIRONMENT"
-
-# Plan deployment
-echo "Planning deployment..."
-terraform plan \
-    -var="lambda_file_path=../../${DIST_DIR}/lambda.zip" \
-    -var="layer_file_path=../../${DIST_DIR}/layer.zip" \
-    -var-file="${ENVIRONMENT}.tfvars"
-
-# Confirm deployment
-read -p "Do you want to apply these changes? (y/N): " -n 1 -r
-echo
-if [[ $REPLY =~ ^[Yy]$ ]]; then
-    echo "Applying deployment..."
-    terraform apply \
-        -var="lambda_file_path=../../${DIST_DIR}/lambda.zip" \
-        -var="layer_file_path=../../${DIST_DIR}/layer.zip" \
-        -var-file="${ENVIRONMENT}.tfvars"
-    
-    echo "Deployment completed successfully!"
-else
-    echo "Deployment cancelled."
-fi
+# Apply
+terraform apply -var-file="terraform.tfvars"
 ```
 
-## Environment Management
+### Updating Code Only
 
-### Environment-Specific Configuration
+If only the Lambda function code changed (no infrastructure changes), the same workflow applies. Terraform detects the changed `source_code_hash` and updates the function and publishes a new version.
 
-**Development (`dev.tfvars`):**
-```hcl
-# Development environment
-lambda_function_name = "my-lambda-dev"
-memory_size         = 128
-timeout             = 30
-log_retention_days  = 7
-provisioned_concurrency = 0
+### Lambda Alias
 
-environment_variables = {
-  ENVIRONMENT = "dev"
-  LOG_LEVEL   = "DEBUG"
-  DEBUG_MODE  = "true"
-}
+The deployment creates a `current` alias that points to the latest published version. Use this as a stable invocation endpoint.
 
-tags = {
-  Environment = "dev"
-  Project     = "my-project"
-}
-```
+## Monitoring
 
-**Production (`prod.tfvars`):**
-```hcl
-# Production environment
-lambda_function_name = "my-lambda-prod"
-memory_size         = 512
-timeout             = 60
-log_retention_days  = 30
-provisioned_concurrency = 5
+The Terraform configuration creates two CloudWatch alarms:
 
-environment_variables = {
-  ENVIRONMENT = "prod"
-  LOG_LEVEL   = "INFO"
-  DEBUG_MODE  = "false"
-}
+| Alarm | Metric | Threshold |
+| ----- | ------ | --------- |
+| `{name}-errors` | Error count | > 0 over 2 consecutive 5-min periods |
+| `{name}-duration` | Average duration | > 10 minutes (600,000 ms) |
 
-tags = {
-  Environment = "prod"
-  Project     = "my-project"
-  CostCenter  = "engineering"
-}
-```
+Alarms route to the SNS topic specified in `alarm_sns_topic_arn`. If empty, alarms are created but have no notification target.
 
-### Multi-Environment Deployment
+X-Ray tracing is enabled by default (`Active` mode).
+
+## Rollback
 
 ```bash
-# Deploy to development
-./scripts/deploy-lambda.sh my_lambda dev
-
-# Deploy to staging
-./scripts/deploy-lambda.sh my_lambda staging
-
-# Deploy to production
-./scripts/deploy-lambda.sh my_lambda prod
-```
-
-## Version Management
-
-### Lambda Versioning Strategy
-
-```hcl
-# Create new version on each deployment
-resource "aws_lambda_function" "main" {
-  # ... other configuration ...
-  
-  publish = true  # Creates new version on each update
-}
-
-# Production alias points to specific version
-resource "aws_lambda_alias" "prod" {
-  name             = "prod"
-  function_name    = aws_lambda_function.main.function_name
-  function_version = var.prod_function_version  # Controlled version
-}
-
-# Development alias points to latest
-resource "aws_lambda_alias" "dev" {
-  name             = "dev"
-  function_name    = aws_lambda_function.main.function_name
-  function_version = "$LATEST"
-}
-```
-
-### Promoting Versions
-
-```bash
-# Get current latest version
-LATEST_VERSION=$(aws lambda get-function \
-    --function-name my-lambda-function \
-    --query 'Configuration.Version' \
-    --output text)
-
-# Update production alias to latest version
-terraform apply \
-    -var="prod_function_version=${LATEST_VERSION}" \
-    -var-file="prod.tfvars"
-```
-
-## Monitoring and Observability
-
-### CloudWatch Configuration
-
-```hcl
-# CloudWatch alarms
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  alarm_name          = "${var.lambda_function_name}-errors"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "5"
-  alarm_description   = "This metric monitors lambda errors"
-  
-  dimensions = {
-    FunctionName = aws_lambda_function.main.function_name
-  }
-  
-  alarm_actions = [var.sns_topic_arn]
-}
-
-resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  alarm_name          = "${var.lambda_function_name}-duration"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Duration"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Average"
-  threshold           = "30000"  # 30 seconds
-  alarm_description   = "This metric monitors lambda duration"
-  
-  dimensions = {
-    FunctionName = aws_lambda_function.main.function_name
-  }
-  
-  alarm_actions = [var.sns_topic_arn]
-}
-```
-
-### X-Ray Tracing
-
-```hcl
-# Enable X-Ray tracing
-resource "aws_lambda_function" "main" {
-  # ... other configuration ...
-  
-  tracing_config {
-    mode = "Active"
-  }
-}
-
-# X-Ray service map
-resource "aws_xray_sampling_rule" "lambda_sampling" {
-  rule_name      = "${var.lambda_function_name}-sampling"
-  priority       = 9000
-  version        = 1
-  reservoir_size = 1
-  fixed_rate     = 0.1
-  url_path       = "*"
-  host           = "*"
-  http_method    = "*"
-  service_type   = "AWS::Lambda::Function"
-  service_name   = var.lambda_function_name
-  resource_arn   = "*"
-}
-```
-
-## Rollback Procedures
-
-### Quick Rollback
-
-```bash
-# Rollback to previous version
-PREVIOUS_VERSION=$(aws lambda list-versions-by-function \
-    --function-name my-lambda-function \
+# Get the previous version number
+aws lambda list-versions-by-function \
+    --function-name s3-flywheel-import \
     --query 'Versions[-2].Version' \
-    --output text)
+    --output text
 
-# Update production alias
+# Update the alias to point to the previous version
 aws lambda update-alias \
-    --function-name my-lambda-function \
-    --name prod \
-    --function-version $PREVIOUS_VERSION
+    --function-name s3-flywheel-import \
+    --name current \
+    --function-version <PREVIOUS_VERSION>
 ```
 
-### Terraform Rollback
+For a full infrastructure rollback, use `terraform apply` with the previous code artifacts in `dist/`.
 
-```bash
-# Rollback using Terraform
-terraform apply \
-    -var="prod_function_version=PREVIOUS_VERSION" \
-    -var-file="prod.tfvars"
-```
+## Outputs
 
-## CI/CD Integration
+After `terraform apply`, these outputs are available:
 
-### GitHub Actions Example
-
-**File: `.github/workflows/deploy-lambda.yml`**
-
-```yaml
-name: Deploy Lambda
-
-on:
-  push:
-    branches: [main]
-    paths: ['lambda/**']
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    
-    steps:
-    - uses: actions/checkout@v3
-    
-    - name: Setup Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: '3.12'
-    
-    - name: Install dependencies
-      run: |
-        curl -L -o pants https://github.com/pantsbuild/scie-pants/releases/latest/download/scie-pants-linux-x86_64
-        chmod +x pants
-        ./pants --version
-    
-    - name: Build Lambda
-      run: ./pants package ::
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
-    
-    - name: Deploy with Terraform
-      run: |
-        cd lambda/my_lambda
-        terraform init
-        terraform apply -auto-approve \
-          -var="lambda_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/lambda.zip" \
-          -var="layer_file_path=../../dist/lambda.my_lambda.src.python.my_lambda_lambda/layer.zip" \
-          -var-file="prod.tfvars"
-```
-
-## Best Practices
-
-### Security
-- Use least privilege IAM roles
-- Enable VPC configuration for database access
-- Encrypt environment variables
-- Use AWS Secrets Manager for sensitive data
-
-### Performance
-- Right-size memory allocation
-- Use provisioned concurrency for consistent performance
-- Optimize package size
-- Monitor cold start metrics
-
-### Cost Optimization
-- Use appropriate timeout values
-- Monitor unused functions
-- Optimize memory vs. duration trade-offs
-- Use reserved concurrency when needed
-
-### Reliability
-- Implement proper error handling
-- Use dead letter queues
-- Set up comprehensive monitoring
-- Test rollback procedures
-
-This deployment guide provides a comprehensive approach to deploying Lambda functions in a production environment while maintaining best practices for security, performance, and reliability.
+| Output | Description |
+| ------ | ----------- |
+| `lambda_function_arn` | Lambda function ARN |
+| `lambda_function_name` | Lambda function name |
+| `lambda_invoke_arn` | Invoke ARN (for API Gateway integration) |
+| `lambda_function_version` | Latest published version |
+| `lambda_alias_arn` | Current alias ARN (stable endpoint) |
+| `lambda_role_arn` | IAM execution role ARN |
+| `lambda_role_name` | IAM execution role name |
+| `layer_arn` | Dependencies layer ARN |
+| `cloudwatch_log_group_name` | CloudWatch log group name |
+| `lambda_configuration` | Configuration summary object |
