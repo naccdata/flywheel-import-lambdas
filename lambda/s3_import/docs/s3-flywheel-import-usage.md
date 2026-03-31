@@ -161,29 +161,51 @@ To use this lambda with a new S3 bucket or SSM parameter:
 
 ### 1. Identify the Flywheel storage ID
 
-The storage ID maps to a specific S3 bucket in Flywheel. Get it from the Flywheel admin UI or API:
+The storage ID maps to a specific S3 bucket in Flywheel. Get it with the Flywheel ("beta") CLI:
 
+```bash
+flyw admin storage list
 ```
-GET /api/xfer/storages
-```
 
-### 2. Update IAM policy (if needed)
+### 2. Update IAM policies (if needed)
 
-The lambda's IAM role must have access to the S3 bucket and SSM parameter. In `lambda/s3_import/variables.tf`, the relevant variables are:
+The lambda's IAM role includes inline policies for S3 and SSM access, driven by two list variables in `lambda/s3_import/variables.tf`:
 
-- `s3_bucket_arn` — ARN of the source S3 bucket
-- `ssm_parameter_arn` — ARN of the SSM parameter with the API key
+| Variable | Purpose | Default |
+| --- | --- | --- |
+| `s3_bucket_arns` | S3 buckets the Lambda can read from (`s3:GetObject`, `s3:ListBucket`) | `naccquickaccess`, `loni-table-data` |
+| `ssm_parameter_arns` | SSM parameters the Lambda can read (`ssm:GetParameter`) | `/prod/flywheel/gearbot/apikey` |
 
-If the new scenario uses a bucket or parameter not already in the policy, update the Terraform config. For multiple buckets, change the variables to lists:
+If the new scenario uses a bucket or parameter not already listed, add its ARN to the appropriate variable in your tfvars file and re-apply Terraform. No changes to `main.tf` are needed.
+
+**Example — adding a new source bucket:**
 
 ```hcl
-variable "s3_bucket_arns" {
-  description = "ARNs of source S3 buckets"
-  type        = list(string)
-}
+s3_bucket_arns = [
+  "arn:aws:s3:::naccquickaccess",
+  "arn:aws:s3:::loni-table-data",
+  "arn:aws:s3:::my-new-source-bucket"
+]
 ```
 
-And update the IAM policy resource block accordingly.
+**Example — using a different SSM parameter:**
+
+```hcl
+ssm_parameter_arns = [
+  "arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/gearbot/apikey",
+  "arn:aws:ssm:us-west-2:090173369068:parameter/prod/flywheel/other-bot/apikey"
+]
+```
+
+After updating the tfvars file:
+
+```bash
+cd lambda/s3_import
+terraform plan -var-file="terraform.tfvars"
+terraform apply -var-file="terraform.tfvars"
+```
+
+See `docs/deployment-guide.md` for full details on IAM policy management and the complete list of managed policies.
 
 ### 3. Invoke with the new payload
 
@@ -196,7 +218,7 @@ No code changes or redeployment needed — just invoke the lambda with the appro
 ```bash
 aws lambda invoke \
   --function-name s3-flywheel-import \
-  --qualifier dev \
+  --qualifier current \
   --payload file://event.json \
   response.json
 ```
