@@ -4,7 +4,8 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from httpx import HTTPError
+from httpx import HTTPError, Request
+from pydantic import ValidationError
 from s3_import_lambda.lambda_function import get_api_key, lambda_handler
 from s3_import_models.models import PairImportResult
 
@@ -94,53 +95,43 @@ class TestLambdaHandlerFlow:
 
 
 class TestErrorClassification:
-    """Test that different exceptions map to correct error_type values."""
+    """Test that fatal errors propagate as exceptions for Step Functions."""
 
-    def test_invalid_event_returns_configuration_error(
+    def test_invalid_event_raises_validation_error(
         self, mock_lambda_context: MagicMock
     ) -> None:
         bad_event: dict[str, Any] = {"storage_id": "", "api_key_path": "no-slash"}
-        result = lambda_handler(bad_event, mock_lambda_context)
-
-        assert result["status"] == "failed"
-        assert result["error_type"] == "ConfigurationError"
+        with pytest.raises(ValidationError):
+            lambda_handler(bad_event, mock_lambda_context)
 
     @patch("s3_import_lambda.lambda_function.get_api_key")
-    def test_ssm_failure_returns_authentication_error(
+    def test_ssm_failure_raises_runtime_error(
         self,
         mock_get_key: MagicMock,
         mock_lambda_context: MagicMock,
     ) -> None:
         mock_get_key.side_effect = RuntimeError("Parameter not found")
-        result = lambda_handler(_valid_event(), mock_lambda_context)
-
-        assert result["status"] == "failed"
-        assert result["error_type"] == "AuthenticationError"
-        assert "Parameter not found" in result["error_message"]
+        with pytest.raises(RuntimeError, match="Parameter not found"):
+            lambda_handler(_valid_event(), mock_lambda_context)
 
     @patch("s3_import_lambda.lambda_function.ClientHandler")
     @patch("s3_import_lambda.lambda_function.get_api_key")
-    def test_flywheel_http_error_returns_sdk_error(
+    def test_flywheel_http_error_raises(
         self,
         mock_get_key: MagicMock,
         mock_ch_cls: MagicMock,
         mock_lambda_context: MagicMock,
     ) -> None:
         mock_get_key.return_value = "key"
-        # Create HTTPError and set .request so str() doesn't raise
-        from httpx import Request
-
         err = HTTPError("Flywheel API error")
         err.request = Request("GET", "https://flywheel.example.com/api")  # type: ignore[assignment]
         mock_ch_cls.side_effect = err
-        result = lambda_handler(_valid_event(), mock_lambda_context)
-
-        assert result["status"] == "failed"
-        assert result["error_type"] == "SDKError"
+        with pytest.raises(HTTPError):
+            lambda_handler(_valid_event(), mock_lambda_context)
 
     @patch("s3_import_lambda.lambda_function.ClientHandler")
     @patch("s3_import_lambda.lambda_function.get_api_key")
-    def test_unexpected_exception_returns_unexpected_error(
+    def test_unexpected_exception_raises(
         self,
         mock_get_key: MagicMock,
         mock_ch_cls: MagicMock,
@@ -148,11 +139,8 @@ class TestErrorClassification:
     ) -> None:
         mock_get_key.return_value = "key"
         mock_ch_cls.side_effect = TypeError("something weird")
-        result = lambda_handler(_valid_event(), mock_lambda_context)
-
-        assert result["status"] == "failed"
-        assert result["error_type"] == "UnexpectedError"
-        assert "something weird" in result["error_message"]
+        with pytest.raises(TypeError, match="something weird"):
+            lambda_handler(_valid_event(), mock_lambda_context)
 
 
 # ---------------------------------------------------------------------------

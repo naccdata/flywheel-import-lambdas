@@ -28,7 +28,13 @@ class PrefixPathPair(BaseModel):
     exclude_patterns: list[str] = []
     """Substring exclude filters."""
 
-    @field_validator("s3_prefix", "fw_group", "fw_project")
+    @field_validator("s3_prefix")
+    @classmethod
+    def normalize_s3_prefix(cls, v: str) -> str:
+        """Normalize s3_prefix: strip whitespace, allow empty (bucket root)."""
+        return v.strip()
+
+    @field_validator("fw_group", "fw_project")
     @classmethod
     def must_be_non_empty(cls, v: str) -> str:
         """Validate that string fields are non-empty."""

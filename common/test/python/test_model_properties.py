@@ -11,7 +11,7 @@ def prefix_path_pair_strategy() -> st.SearchStrategy[PrefixPathPair]:
     """Generate valid PrefixPathPair instances."""
     return st.builds(
         PrefixPathPair,
-        s3_prefix=st.text(min_size=1).filter(lambda s: s.strip()),
+        s3_prefix=st.text(min_size=0),
         fw_group=st.text(min_size=1).filter(lambda s: s.strip()),
         fw_project=st.text(min_size=1).filter(lambda s: s.strip()),
         include_patterns=st.lists(st.text()),
