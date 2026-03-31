@@ -5,22 +5,26 @@ A serverless AWS Lambda implementation using Pants build system and Terraform fo
 ## Quick Start
 
 1. **Install Prerequisites**
+
    ```bash
    npm install -g @devcontainers/cli
    ```
 
 2. **Start Development Environment**
+
    ```bash
    ./bin/start-devcontainer.sh
    ./bin/terminal.sh
    ```
 
 3. **Build and Test**
+
    ```bash
    pants fix lint check test ::
    ```
 
 4. **Deploy Lambda**
+
    ```bash
    pants package lambda/my_lambda/src/python/my_lambda_lambda::
    cd lambda/my_lambda
@@ -49,6 +53,7 @@ A serverless AWS Lambda implementation using Pants build system and Terraform fo
 ## Development Workflow
 
 ### Daily Development
+
 ```bash
 # Start container
 ./bin/start-devcontainer.sh
@@ -64,6 +69,7 @@ pants test ::
 ```
 
 ### Creating New Lambda
+
 ```bash
 # Create directory structure
 mkdir -p lambda/new_lambda/src/python/new_lambda_lambda
@@ -74,6 +80,7 @@ mkdir -p lambda/new_lambda/test/python
 ```
 
 ### Deployment
+
 ```bash
 # Build lambda
 pants package lambda/my_lambda/src/python/my_lambda_lambda::
@@ -113,5 +120,5 @@ terraform apply
 
 1. Check the documentation in `docs/`
 2. Review example implementations in `examples/`
-3. Consult Pants documentation: https://www.pantsbuild.org/
-4. AWS Lambda documentation: https://docs.aws.amazon.com/lambda/
+3. Consult Pants documentation: <https://www.pantsbuild.org/>
+4. AWS Lambda documentation: <https://docs.aws.amazon.com/lambda/>

@@ -7,6 +7,7 @@ botocore-stubs
 fw-client>=0.7.0
 pydantic>=2.7.1
 pytest>=7.2.0
+hypothesis>=6.100.0
 
 # Database dependencies (uncomment as needed)
 # MySQL/MariaDB
