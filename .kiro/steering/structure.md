@@ -37,8 +37,6 @@ flywheel-import-lambdas/
 │   ├── simple-lambda/
 │   ├── database-lambda/
 │   └── common/
-├── reference/                  # Reference LONI lambda (context only, not built)
-│   └── s3-flywheel-import/
 ├── BUILD                       # Root Pants BUILD file
 ├── pants.toml                  # Pants configuration
 ├── requirements.txt            # Python dependencies
@@ -114,8 +112,3 @@ Pants recognizes these as source roots (from `pants.toml`):
 Pants ignores:
 - `.devcontainer/`
 - `.vscode/`
-- `reference/`
-
-## Reference Directory
-
-`reference/s3-flywheel-import/` contains the original LONI-specific lambda being generalized. It is excluded from the Pants build and exists solely as context for the refactor. It should be removed once the generalized lambda is implemented.

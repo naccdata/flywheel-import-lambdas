@@ -12,8 +12,7 @@ backend_packages.add = [
 pants_ignore = [
     '.devcontainer/**',
     '.vscode/**',
-    'examples/**',
-    'reference/**'
+    'examples/**'
 ]
 
 [source]

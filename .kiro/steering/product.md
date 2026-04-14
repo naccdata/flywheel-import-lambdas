@@ -13,7 +13,6 @@ Flywheel Import Lambdas is a Pants-managed monorepo containing AWS Lambda functi
 
 - **Lambda Functions**: Located under `lambda/` — each lambda has its own directory with source, tests, and Terraform
 - **Common Libraries**: Shared code under `common/src/python/` — reusable modules across lambdas (e.g., Flywheel client handler, S3 operations, models)
-- **Reference Implementation**: `reference/s3-flywheel-import/` contains the original LONI-specific lambda being generalized (for context only, not part of the build)
 
 ## Flywheel API Flow
 
